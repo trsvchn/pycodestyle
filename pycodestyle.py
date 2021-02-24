@@ -58,6 +58,7 @@ import time
 import tokenize
 import warnings
 import bisect
+import subprocess
 
 try:
     from functools import lru_cache
@@ -2383,6 +2384,50 @@ class StandardReport(BaseReport):
         return self.file_errors
 
 
+class GHActionReport(StandardReport):
+    """Collect and print the results of the checks during GitHub Actions workflow."""
+
+    def get_file_results(self):
+        """Create warning/error log message, print results and return the overall count for this file."""
+        self._deferred_print.sort()
+        group_title = None
+        for i, (line_number, offset, code, text, doc) in enumerate(self._deferred_print):
+            name = self.filename
+            line = self.line_offset + line_number
+            col = offset + 1
+            message = " ".join([code, text])
+            cmd_type = "error"
+
+            if "E" in code:
+                cmd_type = "error"
+            elif "W" in code:
+                cmd_type = "warning"
+
+            if group_title != name:
+                if i != 0:
+                    endgroup_cmd = 'echo "::endgroup::"'
+                    subprocess.call(endgroup_cmd, shell=True)
+                group_title = name
+                group_cmd = f'echo "::group::Report on {group_title}"'
+                subprocess.call(group_cmd, shell=True)
+
+            cmd = f'echo "::{cmd_type} file={name},line={line},col={col}::{message}"'
+            subprocess.call(cmd, shell=True)
+
+            if self._show_source:
+                if line_number > len(self.lines):
+                    line = ''
+                else:
+                    line = self.lines[line_number - 1]
+                print(line.rstrip())
+                print(re.sub(r'\S', ' ', line[:offset]) + '^')
+            if self._show_pep8 and doc:
+                print('    ' + doc.strip())
+
+            sys.stdout.flush()
+        return self.file_errors
+
+
 class DiffReport(StandardReport):
     """Collect and print the results for the changed lines only."""
 
@@ -2759,6 +2804,7 @@ def _main():
         pass    # not supported on Windows
 
     style_guide = StyleGuide(parse_argv=True)
+    style_guide.init_report(GHActionReport)
     options = style_guide.options
 
     if options.doctest or options.testsuite:
